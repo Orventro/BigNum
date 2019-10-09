@@ -2,6 +2,10 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifndef max
+#define max(a,b)            (((a) > (b)) ? (a) : (b))
+#endif
+
 typedef unsigned long long int uint64;
 typedef long long int int64;
 typedef unsigned int uint32;
@@ -67,14 +71,13 @@ int is_zero(bn const *x) {
     return (*x).size == 1 && (*x).data[0] == 0;
 }
 
-void bn_print_expr(bn const *x) {
-    printf("print(");
+void bn_print_data(bn const *x) {
     for(int i = (*x).size-1; i >= 0; i--) {
         printf("%llu", (*x).data[i]);
         if(i)
-            printf(" * 2**%d + ", i*32);
+            printf(" * 2^%d + ", i*32);
     }
-    printf(", end=' ')\n");
+    printf("\n");
 }
 
 void bn_print(bn const *x) {
@@ -332,7 +335,7 @@ bn* bn_mul(bn const *left, bn const *right) {
     bn_resize(a, ls + rs);
     for(int i = 0; i < ls; i++) {
         for(int j = 0; j < rs; j++) {
-            int64 t = (*left).data[i] * (*right).data[j];
+            uint64 t = ((uint64)(*left).data[i]) * ((uint64)(*right).data[j]);
             (*a).data[i+j] += t&quot_32_bits;
             (*a).data[i+j+1] += t>>32;
         }
@@ -347,6 +350,40 @@ bn* bn_mul(bn const *left, bn const *right) {
         bn_resize(a, ls + rs - 1);
     (*a).sign = (*left).sign ^ (*right).sign;
     return a;
+}
+
+// умножение методом Карацубы
+bn *bn_karat_mul(bn const *a, bn const *b) {
+    int s=1, ms = max((*a).size, (*b).size);
+    if(ms < 33) 
+        return bn_mul(a, b);
+    while(s < ms) s *= 2;
+    bn  *a0 = bn_new(), *a1 = bn_new(), *b0 = bn_new(), *b1 = bn_new();
+    bn_resize(a0, s/2); 
+    bn_resize(a1, s/2); 
+    bn_resize(b0, s/2); 
+    bn_resize(b1, s/2);
+    for(int i = 0; i < s/2; i++) {
+        (*a0).data[i] = (*a).data[i];
+        (*b0).data[i] = (*b).data[i];
+        (*a1).data[i] = (*a).data[i+s/2];
+        (*b1).data[i] = (*b).data[i+s/2];
+    }
+    bn *a0b0 = bn_karat_mul(a0, b0), *a1b1 = bn_karat_mul(a1, b1), 
+        *msum = bn_karat_mul(bn_add(a0, a1), bn_add(b0, b1));
+    delete_bn(a0);
+    delete_bn(a1);
+    delete_bn(b0);
+    delete_bn(b1);
+    bn_sub_to(msum, a0b0);
+    bn_sub_to(msum, a1b1);
+    bn_shift(msum, s/2);
+    bn_shift(a1b1, s);
+    bn_add_to(a1b1, msum);
+    bn_add_to(a1b1, a0b0);
+    delete_bn(a0b0);
+    delete_bn(msum);
+    return a1b1;
 }
 
 int bn_mul_to(bn *t, bn const *right) {
@@ -523,8 +560,8 @@ const char *bn_to_string(bn const *t, uint32 radix) {
         pw++;
     }
     bn *a = init(t);
-    char *buff = calloc(pw * (*t).size + 1, 1);
-    int i = pw * (*t).size;
+    char *buff = calloc(pw * (*t).size + 2, 1), *ret;
+    int i = pw * (*t).size-1;
     const char alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     while(!is_zero(a)) {
         // printf("0\n");
@@ -535,7 +572,11 @@ const char *bn_to_string(bn const *t, uint32 radix) {
     }
     if(!is_zero(t) && (*t).sign) buff[i] = '-';
     else i++;
-    return buff+i;
+    ret = calloc(pw * (*t).size + 5 - i, 1);
+    strcpy(ret, buff+i);
+    free(buff);
+    delete_bn(a);
+    return ret;
 }
 
 int bn_pow_to(bn *t, int deg) {
