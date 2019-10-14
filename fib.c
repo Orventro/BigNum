@@ -20,10 +20,11 @@ mat22* new_mat(int a, int b, int c, int d) {
 
 mat22* mat_mul(mat22 *x, mat22 *y) {
     mat22 *r = new_mat(0, 0, 0, 0);
-    bn *xaya = bn_karat_mul((*x).a, (*y).a), *xbyc = bn_karat_mul((*x).b, (*y).c),
-       *xayb = bn_karat_mul((*x).a, (*y).b), *xbyd = bn_karat_mul((*x).b, (*y).d),
-       *xcya = bn_karat_mul((*x).c, (*y).a), *xdyc = bn_karat_mul((*x).d, (*y).c),
-       *xcyb = bn_karat_mul((*x).c, (*y).b), *xdyd = bn_karat_mul((*x).d, (*y).d);
+    bn *xaya = bn_mul((*x).a, (*y).a), *xbyc = bn_mul((*x).b, (*y).c),
+       *xayb = bn_mul((*x).a, (*y).b), *xbyd = bn_mul((*x).b, (*y).d),
+       *xcya = bn_mul((*x).c, (*y).a), *xdyc = bn_mul((*x).d, (*y).c),
+       *xcyb = bn_mul((*x).c, (*y).b), *xdyd = bn_mul((*x).d, (*y).d);
+    // printf("xbic: %s %s %s\n", bn_to_string((*x).b, 10), bn_to_string((*y).c, 10), bn_to_string(xbyc, 10));
     bn_move_into((*r).a, bn_add(xaya, xbyc));
     bn_move_into((*r).b, bn_add(xayb, xbyd));
     bn_move_into((*r).c, bn_add(xcya, xdyc));
@@ -34,12 +35,12 @@ mat22* mat_mul(mat22 *x, mat22 *y) {
 }
 
 void mat_sq(mat22 *m) {
-    bn *aa = bn_karat_mul((*m).a, (*m).a), *dd = bn_karat_mul((*m).d, (*m).d), 
-       *bc = bn_karat_mul((*m).b, (*m).c), *ad = bn_add((*m).a, (*m).d);
+    bn *aa = bn_mul((*m).a, (*m).a), *dd = bn_mul((*m).d, (*m).d), 
+       *bc = bn_mul((*m).b, (*m).c), *ad = bn_add((*m).a, (*m).d);
     // printf("%s %s\n%s %s\n", bn_to_string(aa, 10), bn_to_string(bc, 10), bn_to_string(ad, 10), bn_to_string(dd, 10));
     bn_move_into((*m).a, bn_add(aa, bc));
-    bn_move_into((*m).b, bn_karat_mul(ad, (*m).b));
-    bn_move_into((*m).c, bn_karat_mul(ad, (*m).c));
+    bn_move_into((*m).b, bn_mul(ad, (*m).b));
+    bn_move_into((*m).c, bn_mul(ad, (*m).c));
     bn_move_into((*m).d, bn_add(dd, bc));
     delete_bn(aa);
     delete_bn(dd);
@@ -55,9 +56,9 @@ void delete_mat(mat22 *m) {
     free(m);
 }
 
-// void mat_print(mat22 *m){
-//     printf("%s %s\n%s %s\n", bn_to_string((*m).a, 10), bn_to_string((*m).b, 10), bn_to_string((*m).c, 10), bn_to_string((*m).d, 10));
-// }
+void mat_print(mat22 *m){
+    printf("%s %s\n%s %s\n", bn_to_string((*m).a, 10), bn_to_string((*m).b, 10), bn_to_string((*m).c, 10), bn_to_string((*m).d, 10));
+}
 
 int main() {
     int n;
@@ -75,14 +76,18 @@ int main() {
         // mat_print(cur);
         // printf("\n");
         if(n%2) {
+            // printf("fin:\n");
+            // mat_print(fin);
             mat22 *t = mat_mul(fin, cur);
+            // printf("t:\n");
+            // mat_print(t);
             delete_mat(fin);
             fin = t;
         }
         n /= 2;
     }
     // mat_print(fin);
-    char *c = bn_to_string((*fin).b, 10);
+    char *c = (char*)bn_to_string((*fin).b, 10);
     printf("%s\n", c);
     free(c);
     delete_mat(fin);

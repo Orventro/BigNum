@@ -6,6 +6,10 @@
 #define max(a,b)            (((a) > (b)) ? (a) : (b))
 #endif
 
+#ifndef min
+#define min(a,b)            (((a) < (b)) ? (a) : (b))
+#endif
+
 typedef unsigned long long int uint64;
 typedef long long int int64;
 typedef unsigned int uint32;
@@ -47,10 +51,26 @@ int delete_bn(bn *x) {
     return 0;
 }
 
+bn *init(bn const *orig) {
+    bn *x = calloc(1, sizeof(bn));
+    (*x).size = (*orig).size;
+    (*x).sign = (*orig).sign;
+    (*x).actual_size = 1;
+    while((*x).actual_size < (*x).size) (*x).actual_size *= 2;
+    (*x).data = calloc((*x).actual_size, 8);
+    for(int i = 0; i < (*x).size; i++)
+        (*x).data[i] = (*orig).data[i];
+    return x;
+}
+
 int bn_move_into(bn *dest, bn *orig) {
     free((*dest).data);
     *dest = *orig;
     free(orig);
+}
+
+int bn_copy_into(bn *dest, bn *orig) {
+    bn_move_into(dest, init(orig));
 }
 
 bn_pair *bn_pair_new() {
@@ -69,6 +89,13 @@ bn_and_uint *bn_and_uint_new() {
 
 int is_zero(bn const *x) {
     return (*x).size == 1 && (*x).data[0] == 0;
+}
+
+void bn_shrink(bn *x) {
+    int i = (*x).size-1;
+    while((*x).data[i] == 0)
+        i--;
+    (*x).size = i+1;
 }
 
 void bn_print_data(bn const *x) {
@@ -135,17 +162,6 @@ void bn_resize(bn *t, int newsize) {
     (*t).size = newsize;
 }
 
-bn *init(bn const *orig) {
-    bn *x = calloc(1, sizeof(bn));
-    (*x).size = (*orig).size;
-    (*x).sign = (*orig).sign;
-    (*x).actual_size = (*orig).actual_size;
-    (*x).data = calloc((*x).actual_size, 8);
-    for(int i = 0; i < (*x).size; i++)
-        (*x).data[i] = (*orig).data[i];
-    return x;
-}
-
 int bn_shift(bn *a, int shift) {
     if(is_zero(a)) return 0;
     if(shift > 0) {
@@ -181,7 +197,6 @@ int bn_shift(bn *a, int shift) {
                                 (*a).data[i+sd32+1]<<(32-sm32) ) & quot_32_bits;
             }
             (*a).data[newsize-1] = (*a).data[(*a).size-1]>>sm32;
-            printf("%d %d\n", newsize, (*a).size);
             if((*a).data[newsize-1])
                 bn_resize(a, newsize);
             else if(newsize > 1)
@@ -263,7 +278,7 @@ int bn_add_int_abs(bn *t, uint32 right) {
     (*t).data[0] += right;
     int i = 0, s = (*t).size;
     while((*t).data[i] > quot_32_bits && i < s) {
-        (*t).data[i+1] += (*t).data[i] >> 32;
+        (*t).data[i+1] ++;
         (*t).data[i] &= quot_32_bits;
     }
     if((*t).data[s-1] > quot_32_bits) {
@@ -271,6 +286,16 @@ int bn_add_int_abs(bn *t, uint32 right) {
         (*t).data[s] = (*t).data[s-1] >> 32;
         (*t).data[s-1] &= quot_32_bits;
     }
+}
+
+int bn_sub_int_abs(bn *t, uint32 right) {
+    (*t).data[0] -= right;
+    if((*t).data[0] < 0) {
+        (*t).data[1] --;
+        (*t).data[0] += (1ll<<32);
+    }
+    if((*t).data[1] == 0)
+        bn_resize(t, 1);
 }
 
 int bn_add_to(bn *t, bn const *right) {
@@ -350,40 +375,6 @@ bn* bn_mul(bn const *left, bn const *right) {
         bn_resize(a, ls + rs - 1);
     (*a).sign = (*left).sign ^ (*right).sign;
     return a;
-}
-
-// умножение методом Карацубы
-bn *bn_karat_mul(bn const *a, bn const *b) {
-    int s=1, ms = max((*a).size, (*b).size);
-    if(ms < 33) 
-        return bn_mul(a, b);
-    while(s < ms) s *= 2;
-    bn  *a0 = bn_new(), *a1 = bn_new(), *b0 = bn_new(), *b1 = bn_new();
-    bn_resize(a0, s/2); 
-    bn_resize(a1, s/2); 
-    bn_resize(b0, s/2); 
-    bn_resize(b1, s/2);
-    for(int i = 0; i < s/2; i++) {
-        (*a0).data[i] = (*a).data[i];
-        (*b0).data[i] = (*b).data[i];
-        (*a1).data[i] = (*a).data[i+s/2];
-        (*b1).data[i] = (*b).data[i+s/2];
-    }
-    bn *a0b0 = bn_karat_mul(a0, b0), *a1b1 = bn_karat_mul(a1, b1), 
-        *msum = bn_karat_mul(bn_add(a0, a1), bn_add(b0, b1));
-    delete_bn(a0);
-    delete_bn(a1);
-    delete_bn(b0);
-    delete_bn(b1);
-    bn_sub_to(msum, a0b0);
-    bn_sub_to(msum, a1b1);
-    bn_shift(msum, s/2);
-    bn_shift(a1b1, s);
-    bn_add_to(a1b1, msum);
-    bn_add_to(a1b1, a0b0);
-    delete_bn(a0b0);
-    delete_bn(msum);
-    return a1b1;
 }
 
 int bn_mul_to(bn *t, bn const *right) {
@@ -495,6 +486,12 @@ int bn_div_to(bn *t, bn const *right) {
     free(d);
 }
 
+int bn_div_to_int(bn *t, uint32 right) {
+    bn_and_uint *d = bn_full_division_abs_int(t, right);
+    bn_move_into(t, (*d).quot);
+    free(d);
+}
+
 int bn_mod_to(bn *t, bn const *right) {
     // printf("m1\n");
     bn_pair *d = bn_full_division(t, right);
@@ -522,6 +519,7 @@ bn *bn_mod(bn const *left, bn const *right) {
     return ans;
 }
 
+
 int bn_init_string(bn *t, const char *str) {
     bn_init_int(t, 0);
     bn *c = bn_new();
@@ -533,11 +531,10 @@ int bn_init_string(bn *t, const char *str) {
     while('0' <= *str && *str <= '9') {
         // bn_print(t);
         // printf(" ");
-        bn_init_int(c, *str-'0');
         // bn_print(c);
         // printf(" ");
         bn_mul_to_int(t, 10);
-        bn_add_to(t, c);
+        bn_add_int_abs(t, *str-'0');
         // bn_print(t);
         // printf("\n");
         str++;
@@ -555,29 +552,58 @@ const char *bn_to_string(bn const *t, uint32 radix) {
     }
     int pw = 0;
     int64 n = 1;
-    while(n < (1ll<<32)) {
+    while(n*radix < (1ll<<32)) {
         n *= radix;
         pw++;
     }
+    uint32 radix_max = n;
     bn *a = init(t);
-    char *buff = calloc(pw * (*t).size + 2, 1), *ret;
-    int i = pw * (*t).size-1;
+    int digits = (*t).size*(pw+1) + 2;
+    char *buff = calloc(digits, 1), *ret;
+    int i = digits-2;
     const char alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    while(!is_zero(a)) {
-        // printf("0\n");
-        bn_and_uint *bau = bn_full_division_abs_int(a, radix);  // (quotient ; remainder)
-        buff[i--] = alphabet[(*bau).rem];
+    bn_and_uint *bau;
+    while((*a).size > 1) {
+        bau = bn_full_division_abs_int(a, radix_max);  // (quotient ; remainder)
+        for(int j = 0; j < pw; j++) {
+            buff[i--] = alphabet[(*bau).rem%radix];
+            (*bau).rem /= radix;
+        }
         bn_move_into(a, (*bau).quot);
         free(bau);
     }
+    while((*a).data[0]) {
+        buff[i--] = alphabet[(*a).data[0] % radix];
+        (*a).data[0] /= radix;
+    }
+    delete_bn(a);
     if(!is_zero(t) && (*t).sign) buff[i] = '-';
     else i++;
-    ret = calloc(pw * (*t).size + 5 - i, 1);
+    ret = calloc(digits + 3 - i, 1);
     strcpy(ret, buff+i);
     free(buff);
-    delete_bn(a);
     return ret;
 }
+
+// const bn_to_string_rec(bn const *t, uint32 radix){
+//     if(is_zero(t)) {
+//         char *s = malloc(2);
+//         s[0] = '0';
+//         s[1] = 0;
+//         return s;
+//     }
+//     int pw = 0;
+//     int64 n = 1;
+//     while(n < (1ll<<32)) {
+//         n *= radix;
+//         pw++;
+//     }
+//     n /= radix;
+//     pw--;
+//     uint32 radix_max = n;
+//     int digits = (*t).size*(pw+1) + 2;
+//     bn *a = init(t);
+// }
 
 int bn_pow_to(bn *t, int deg) {
     bn *cur_pow = init(t);
@@ -585,14 +611,123 @@ int bn_pow_to(bn *t, int deg) {
         bn_init_int(t, 1);
     deg >>= 1;
     while(deg) {
-        printf("%s**2 = ", bn_to_string(cur_pow, 10));
         bn_mul_to(cur_pow, cur_pow);
-        printf("%s\n", bn_to_string(cur_pow, 10));
-        printf("%s*%s = ", bn_to_string(cur_pow, 10), bn_to_string(t, 10));
         if(deg & 1)
             bn_mul_to(t, cur_pow);
-        printf("%s\n", bn_to_string(t, 10));
         deg >>= 1;
     }
     delete_bn(cur_pow);
+}
+
+int bn_root_to_newton(bn *t, int reciprocal) {
+    bn *s = init(t);
+    bn_shift(t, (*t).size / -2);
+    for(int i = 0; i < 100; i++){
+        bn *a = init(t);
+        bn_pow_to(t, reciprocal-1);
+        bn *b = bn_mul(t, a);
+        bn_sub_to(b, s);
+        bn_mul_to_int(t, reciprocal);
+        bn_pair *pair = bn_full_division(b, t);
+        bn_move_into(t, bn_sub(a, (*pair).quot));
+        delete_bn(a);
+        delete_bn(b);
+        if((*(*pair).quot).size == 1 && (*(*pair).quot).data[0] == 0) {
+            delete_bn((*pair).quot);
+            delete_bn((*pair).rem);
+            break;
+        }
+        delete_bn((*pair).quot);
+        delete_bn((*pair).rem);
+    }
+    delete_bn(s);
+    bn *tp = init(t);
+    bn_pow_to(tp, reciprocal);
+    if(bn_cmp(tp, s) >= 0) {
+        bn_sub_int_abs(t, 1);
+    }
+}
+
+int bn_root_to_bin(bn *t, int rep) {
+    if(rep == 1) return 0;
+    int sign = 0;
+    if((*t).sign) {
+        sign = 1;
+        (*t).sign = 0;
+    }
+    bn *s = init(t);
+    bn *mn = bn_new(), *mx = init(t); // min max
+    bn_shift(mx, -((*mx).size*(rep-1)/rep));
+    bn_init_int(mn, 1);
+    int i = 0;
+    while(bn_cmp(mn, mx) < 0) {
+        i++;
+        bn_move_into(t, bn_add(mn, mx));
+        bn_add_int_abs(t, 1);
+        bn_div_to_int(t, 2);
+        bn *c = init(t);
+        bn_pow_to(c, rep);
+        int64 cmp = bn_cmp(c, s);
+        if(cmp == 0) {
+            delete_bn(s);
+            delete_bn(mn);
+            delete_bn(mx);
+            (*t).sign = sign;
+            return 0;
+        } else if(cmp > 0) {
+            bn_copy_into(mx, t);
+            bn_sub_int_abs(mx, 1);
+        } else {
+            bn_copy_into(mn, t);
+        }
+    }
+    bn_move_into(t, mx);
+    delete_bn(s);
+    delete_bn(mn);
+    (*t).sign = sign;
+    return 0;
+}
+
+// умножение методом Карацубы
+bn *bn_karat_mul(bn const *a, bn const *b) {
+    int s=1, ms = max((*a).size, (*b).size);
+    if(min((*a).size, (*b).size) < 1000) {
+        // printf("small numbers\n");
+        return bn_mul(a, b);
+    } // else printf("big numbers\n");
+    while(s < ms) s *= 2;
+    bn  *a0 = bn_new(), *a1 = bn_new(), *b0 = bn_new(), *b1 = bn_new();
+    bn_resize(a0, min(s/2, (*a).size)); 
+    bn_resize(a1, max(0,   (*a).size-s/2)); 
+    bn_resize(b0, min(s/2, (*b).size)); 
+    bn_resize(b1, max(0,   (*b).size-s/2)); 
+    for(int i = 0; i < (*a0).size; i++) (*a0).data[i] = (*a).data[i];
+    for(int i = 0; i < (*a1).size; i++) (*a1).data[i] = (*a).data[i+s/2];
+    for(int i = 0; i < (*b0).size; i++) (*b0).data[i] = (*b).data[i];
+    for(int i = 0; i < (*b1).size; i++) (*b1).data[i] = (*b).data[i+s/2];
+    if((*a1).size == 0) bn_resize(a1, 1);
+    if((*b1).size == 0) bn_resize(b1, 1);
+    // printf("%s %s %s %s\n", bn_to_string(a0, 10), bn_to_string(a1, 10), bn_to_string(b0, 10), bn_to_string(b1, 10));
+    bn  *a0b0 = bn_karat_mul(a0, b0), 
+        *a1b1 = bn_karat_mul(a1, b1), 
+        *a0a1 = bn_add(a0, a1), 
+        *b0b1 = bn_add(b0, b1), 
+        *msum = bn_karat_mul(a0a1, b0b1);
+    // printf("%s %s %s %s %s\n", bn_to_string(a0b0, 10), bn_to_string(a1b1, 10), bn_to_string(a0a1, 10), bn_to_string(b0b1, 10), bn_to_string(msum, 10));
+    delete_bn(a0a1);
+    delete_bn(b0b1);
+    delete_bn(a0);
+    delete_bn(a1);
+    delete_bn(b0);
+    delete_bn(b1);
+    bn_sub_to(msum, a0b0);
+    bn_sub_to(msum, a1b1);
+    bn_shift(msum, s*32/2);
+    bn_shift(a1b1, s*32);
+    bn_add_to(a1b1, msum);
+    bn_add_to(a1b1, a0b0);
+    delete_bn(a0b0);
+    delete_bn(msum);
+    (*a1b1).sign = (*a).sign ^ (*b).sign;
+    return a1b1;
 }
