@@ -16,7 +16,7 @@ typedef unsigned int uint32;
 
 const int64 quot_32_bits = (1ll<<32)-1;
 
-typedef struct bn{
+typedef struct bn_s{
     int64 *data;
     int size, actual_size, sign;
 } bn;
@@ -124,8 +124,6 @@ void bn_print(bn const *x) {
     exprc += sprintf(exprc, "' | BC_LINE_LENGTH=0 bc");
     FILE *f = popen(expr, "r");
     fgets(buff, 200, f);
-    int len = strlen(buff);
-    buff[len-1] = 0;
     if((*x).sign) printf("-");
     printf("%s", buff);
     pclose(f);
@@ -434,6 +432,7 @@ bn_pair *bn_full_division_abs(bn const *left, bn const *right) { // left / right
         bn_shift((*ans).quot, 32);
     }
     bn_shift((*ans).quot, -32);
+    for(int i = 0; i < 32; i++) delete_bn(m[i]);
     return ans;
 }
 
@@ -585,26 +584,6 @@ const char *bn_to_string(bn const *t, uint32 radix) {
     return ret;
 }
 
-// const bn_to_string_rec(bn const *t, uint32 radix){
-//     if(is_zero(t)) {
-//         char *s = malloc(2);
-//         s[0] = '0';
-//         s[1] = 0;
-//         return s;
-//     }
-//     int pw = 0;
-//     int64 n = 1;
-//     while(n < (1ll<<32)) {
-//         n *= radix;
-//         pw++;
-//     }
-//     n /= radix;
-//     pw--;
-//     uint32 radix_max = n;
-//     int digits = (*t).size*(pw+1) + 2;
-//     bn *a = init(t);
-// }
-
 int bn_pow_to(bn *t, int deg) {
     bn *cur_pow = init(t);
     if(deg%2 == 0)
@@ -617,6 +596,139 @@ int bn_pow_to(bn *t, int deg) {
         deg >>= 1;
     }
     delete_bn(cur_pow);
+}
+
+// const char* bn_to_string_no_divs(bn const *t, uint32 radix){
+
+// }
+
+//no overwriting
+const int bn_to_string_rec_fast(bn const *t, uint32 radix, int pw, char *c){
+    if(is_zero(t)) {
+        *c = '0';
+        return 1;
+    }
+    if((*t).size > 2) {
+        int digits = (*t).size*pw + 2;
+        bn *a = bn_new();
+        bn_init_int(a, radix);
+        bn_pow_to(a, digits/2);
+        (*a).sign = (*t).sign;
+        bn_pair *bnp = bn_full_division(t, a);
+        (*(*bnp).rem).sign = 0;
+        delete_bn(a);
+        int bl2 = bn_to_string_rec_fast((*bnp).rem, radix, pw, c);
+        for(int i = -bl2; i >= -(digits/2); i--) c[i] = '0';
+        int bl1 = bn_to_string_rec_fast((*bnp).quot, radix, pw, c-(digits/2));
+        delete_bn((*bnp).rem);
+        delete_bn((*bnp).quot);
+        free(bnp);
+        return bl1 + digits/2;
+    } else {
+        uint64 a = (*t).data[0];
+        if((*t).size > 1)
+            a += ((uint64)(*t).data[1])<<32ull;
+        if(a == 0) {
+            *c = '0';
+            return 1;
+        }
+        const char alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        int l = 0;
+        while(a > 0) {
+            (*c) = alphabet[a % radix];
+            a /= radix;
+            c--;
+            l++;
+        }
+        return l;
+    }
+}
+
+const char* bn_to_string_fast(bn const *t, uint32 radix){
+    int pw;
+    uint64 n = 1;
+    while(n < 1ll<<32) {
+        n *= radix;
+        pw++;
+    }
+    int len1 = (*t).size*pw;
+    char *buff = malloc(len1);
+    buff[len1-1] = 0;
+    int len2 = bn_to_string_rec_fast(t, radix, pw, buff+len1-2);
+    char *ret = malloc(len2);
+    if((*t).sign) ret[0] = '-';
+    strcpy(ret + ((*t).sign != 0), buff+len1-len2-1);
+    return ret;
+}
+
+const char* bn_to_string_rec(bn const *t, uint32 radix){
+    // printf(" ");
+    // bn_print(t);
+    // printf("\n");
+    if(is_zero(t)) {
+        char *s = malloc(2);
+        s[0] = '0';
+        s[1] = 0;
+        return s;
+    }
+    if((*t).size > 2) {
+        int pw = 0;
+        int64 n = 1;
+        while(n*radix < (1ll<<32)) {
+            n *= radix;
+            pw++;
+        }
+        uint32 radix_max = n;
+        int digits = (*t).size*(pw+1) + 2;
+        bn *a = bn_new();
+        bn_init_int(a, radix);
+        bn_pow_to(a, digits/2);
+        bn_pair *bnp;
+        int sign=0;
+        sign = (*a).sign = (*t).sign;
+        bnp = bn_full_division(t, a);
+        (*(*bnp).rem).sign = 0;
+        delete_bn(a);
+        char *buff = calloc(digits, 1);
+        if(sign) buff[0] = '-';
+        char *buff1 = (char*)bn_to_string_rec((*bnp).quot, radix),
+             *buff2 = (char*)bn_to_string_rec((*bnp).rem, radix);
+        delete_bn((*bnp).rem);
+        delete_bn((*bnp).quot);
+        free(bnp);
+        int b1l = strlen(buff1);
+        strcat(buff, buff1);
+        int b2l = strlen(buff2);
+        // printf("d/2 %d\n", digits/2);
+        // printf("%s %d , %s %d\n", buff1, b1l, buff2, b2l);
+        for(int i = 0; i < digits/2-b2l; i++)  buff[b1l+i+sign] = '0'; 
+        for(int i = 0; i < b2l;          i++)  buff[b1l+i+sign + digits/2-b2l] = buff2[i];
+        free(buff1);
+        free(buff2);
+        return buff;
+    } else {
+        uint64 a = (*t).data[0];
+        if((*t).size > 1)
+            a += ((uint64)(*t).data[1])<<32ull;
+        if(a == 0) {
+            char *ret = malloc(2);
+            ret[0] = '0';
+            ret[1] = 0;
+            return ret;
+        }
+        char *buff = malloc(33), *p = buff+32, *ret;
+        buff[32] = 0;
+        const char alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        while(a > 0) {
+            p--;
+            (*p) = alphabet[a % radix];
+            a /= radix;
+        }
+        ret = malloc(buff-p+33);
+        strcpy(ret, p);
+        free(buff);
+        return ret;
+    }
 }
 
 int bn_root_to_newton(bn *t, int reciprocal) {

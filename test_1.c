@@ -10,11 +10,8 @@ int main() {
     bn *a = bn_new();
     bn_init_string(a, buff);
     free(buff);
-    int rep;
-    scanf("%d", &rep);
-    bn_root_to_bin(a, rep);
-    // buff = (char*) bn_to_string(a, 10);
-    // printf("%s\n", buff);
-    // free(buff);
+    buff = (char*) bn_to_string_fast(a, 10);
+    printf("%s\n", buff);
+    free(buff);
     delete_bn(a);
 }
