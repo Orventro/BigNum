@@ -1,5 +1,6 @@
-s = 100000000000.0
-x = s/2
-for i in range(100):
-    x -= (x*x-s)/(2*x)
-    print(x)
+n = int(input())
+for i in range(n):
+    a, b = input().split(' ')
+    a = int(a)
+    b = int(b)
+    print(a // b, a % b)

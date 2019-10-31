@@ -5,13 +5,20 @@
 
 using namespace std;
 
-int main() {
-    int n;
-    cin >> n;
-    for(int i = 0; i < n; i++)
+void print_num(int len) {
+    for(int i = 0; i < len; i++)
         cout << (char)(rand()%10+'0');
-    // cout << "\n+\n";
-    // for(int i = 0; i < n; i++)
-    //     cout << (char)(rand()%10+'0');
-    cout << endl;
+}
+
+int main() {
+    int n, k; // num, len
+    cin >> n >> k;
+    cout << n << endl;
+    for(int i = 0; i < n; i++) {
+        int l1 = rand()%k, l2 = rand()%(k/2); 
+        print_num(l1);
+        cout << ' ';
+        print_num(l2);
+        cout << endl;
+    }
 }

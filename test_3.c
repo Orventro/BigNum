@@ -5,16 +5,24 @@
 #include "bn.c"
 
 int main() {
-    bn *a = bn_new(), *b = bn_new();
-    bn_init_int(a, 1);
-    bn_init_string(a, "4807526976");
-    bn_init_string(b, "251728825683549488150424261");
-    printf("%d %d\n", (*a).size, (*b).size);
-    bn_move_into(a, bn_karat_mul(a, b));
-    char *c = (char*)bn_to_string(a, 10);
-    printf("%s\n", c);
-    free(c);
-    delete_bn(a);
-    delete_bn(b);
-    //free(s);
+    int n = 0;
+    scanf("%d\n", &n);
+    char *buff1 = malloc(100000), *buff2 = malloc(100000), *buff3, *buff4;
+    for(int i = 0; i < n; i++) {
+        scanf("%s %s\n", buff1, buff2);
+        bn *a = bn_new(), *b = bn_new();
+        bn_init_string(a, buff1);
+        bn_init_string(b, buff2);
+
+        bn *m = bn_mul(a, b);
+        buff3 = (char*)bn_to_string(m, 10);
+        printf("%s\n", buff3);
+        
+        free(buff3);
+        delete_bn(a);
+        delete_bn(b);
+        delete_bn(m);
+    }
+    free(buff1);
+    free(buff2);
 }

@@ -91,6 +91,21 @@ int is_zero(bn const *x) {
     return (*x).size == 1 && (*x).data[0] == 0;
 }
 
+// returns true for 0
+// ignors sign
+int is_pow2(bn const *x) {
+    for(int i = 0; i < x->size-1; i++) 
+        if(x->data[i])
+            return 0;
+    int64 a = x->data[x->size-1];
+    while(a > 1) {
+        if(a % 2) 
+            return 0;
+        a /= 2;
+    }
+    return 1;
+}
+
 void bn_shrink(bn *x) {
     int i = (*x).size-1;
     while((*x).data[i] == 0)
@@ -209,6 +224,8 @@ int bn_shift(bn *a, int shift) {
     }
 }
 
+// positive if a > b
+// ignore sign
 int64 bn_cmp_abs(bn const *a, bn const *b) {
     if((*a).size == (*b).size) {
         int i = (*a).size-1;
@@ -217,6 +234,7 @@ int64 bn_cmp_abs(bn const *a, bn const *b) {
     } else return (*a).size - (*b).size; 
 }
 
+// positive if a > b
 int64 bn_cmp(bn const *a, bn const *b) {
     if((*a).sign == (*b).sign) {
         int s = (*a).sign ? -1 : 1;
@@ -436,29 +454,21 @@ bn_pair *bn_full_division_abs(bn const *left, bn const *right) { // left / right
     return ans;
 }
 
-bn_and_uint *bn_full_division_abs_int(bn const *left, uint32 right) { // left / right
+bn_and_uint *bn_full_division_int(bn const *left, int64 right) { // left / right
     bn_and_uint *ans = bn_and_uint_new(); // (quotioent ; remainder)
-    uint64 m[32];
-    m[0] = right;
-    for(int i = 1; i < 32; i++) 
-        m[i] = m[i-1] + m[i-1];
-    int i = (*left).size-1;
-    if((*left).data[i] < right)
-        (*ans).rem = (*left).data[i--];
-    for(; i >= 0; i--) {
-        (*ans).rem <<= 32;
-        (*ans).rem |= (*left).data[i];
-        int j = 31;
-        while ((*ans).rem >= m[0]) {
-            for(; j >= 0; j--)
-                if((*ans).rem >= m[j])
-                    break;
-            (*(*ans).quot).data[0] += 1ll<<j;
-            (*ans).rem -= m[j];
-        }
-        bn_shift((*ans).quot, 32);
+    ans->quot = init(left);
+    int sign = (right < 0) ^ left->sign;
+    ans->quot->sign = 0;
+    right = abs(right);
+    for(int i = (*left).size-1; i > 0; i--) {
+        ans->quot->data[i-1] += (ans->quot->data[i]%right)<<32;
+        ans->quot->data[i] /= right;
     }
-    bn_shift((*ans).quot, -32);
+    ans->rem = ans->quot->data[0] % right;
+    ans->quot->data[0] /= right;
+    ans->quot->sign = sign;
+    if((ans->quot->size > 1) && (ans->quot->data[ans->quot->size-1] == 0))
+        ans->quot->size--;
     return ans;
 }
 
@@ -485,8 +495,8 @@ int bn_div_to(bn *t, bn const *right) {
     free(d);
 }
 
-int bn_div_to_int(bn *t, uint32 right) {
-    bn_and_uint *d = bn_full_division_abs_int(t, right);
+int bn_div_to_int(bn *t, int right) {
+    bn_and_uint *d = bn_full_division_int(t, right);
     bn_move_into(t, (*d).quot);
     free(d);
 }
@@ -563,7 +573,7 @@ const char *bn_to_string(bn const *t, uint32 radix) {
     const char alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     bn_and_uint *bau;
     while((*a).size > 1) {
-        bau = bn_full_division_abs_int(a, radix_max);  // (quotient ; remainder)
+        bau = bn_full_division_int(a, radix_max);  // (quotient ; remainder)
         for(int j = 0; j < pw; j++) {
             buff[i--] = alphabet[(*bau).rem%radix];
             (*bau).rem /= radix;
@@ -603,12 +613,12 @@ int bn_pow_to(bn *t, int deg) {
 // }
 
 //no overwriting
-const int bn_to_string_rec_fast(bn const *t, uint32 radix, int pw, char *c){
+int bn_to_string_rec_fast(bn const *t, uint32 radix, int pw, char *c){
     if(is_zero(t)) {
         *c = '0';
         return 1;
     }
-    if((*t).size > 2) {
+    if((*t).size > 30000) {
         int digits = (*t).size*pw + 2;
         bn *a = bn_new();
         bn_init_int(a, radix);
@@ -618,28 +628,33 @@ const int bn_to_string_rec_fast(bn const *t, uint32 radix, int pw, char *c){
         (*(*bnp).rem).sign = 0;
         delete_bn(a);
         int bl2 = bn_to_string_rec_fast((*bnp).rem, radix, pw, c);
-        for(int i = -bl2; i >= -(digits/2); i--) c[i] = '0';
+        for(int i = -bl2; i > -(digits/2); i--) c[i] = '0';
         int bl1 = bn_to_string_rec_fast((*bnp).quot, radix, pw, c-(digits/2));
         delete_bn((*bnp).rem);
         delete_bn((*bnp).quot);
         free(bnp);
         return bl1 + digits/2;
     } else {
-        uint64 a = (*t).data[0];
-        if((*t).size > 1)
-            a += ((uint64)(*t).data[1])<<32ull;
-        if(a == 0) {
-            *c = '0';
-            return 1;
-        }
-        const char alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        int l = 0;
-        while(a > 0) {
-            (*c) = alphabet[a % radix];
-            a /= radix;
-            c--;
-            l++;
-        }
+        // uint64 a = (*t).data[0];
+        // if((*t).size > 1)
+        //     a += ((uint64)(*t).data[1])<<32ull;
+        // if(a == 0) {
+        //     *c = '0';
+        //     return 1;
+        // }
+        // const char alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        // int l = 0;
+        // while(a > 0) {
+        //     (*c) = alphabet[a % radix];
+        //     a /= radix;
+        //     c--;
+        //     l++;
+        // }
+        // return l;
+        char *s = (char*)bn_to_string(t, radix);
+        int l = strlen(s);
+        c -= l-1;
+        for(int i = 0; s[i]; i++) c[i] = s[i];
         return l;
     }
 }
@@ -659,76 +674,6 @@ const char* bn_to_string_fast(bn const *t, uint32 radix){
     if((*t).sign) ret[0] = '-';
     strcpy(ret + ((*t).sign != 0), buff+len1-len2-1);
     return ret;
-}
-
-const char* bn_to_string_rec(bn const *t, uint32 radix){
-    // printf(" ");
-    // bn_print(t);
-    // printf("\n");
-    if(is_zero(t)) {
-        char *s = malloc(2);
-        s[0] = '0';
-        s[1] = 0;
-        return s;
-    }
-    if((*t).size > 2) {
-        int pw = 0;
-        int64 n = 1;
-        while(n*radix < (1ll<<32)) {
-            n *= radix;
-            pw++;
-        }
-        uint32 radix_max = n;
-        int digits = (*t).size*(pw+1) + 2;
-        bn *a = bn_new();
-        bn_init_int(a, radix);
-        bn_pow_to(a, digits/2);
-        bn_pair *bnp;
-        int sign=0;
-        sign = (*a).sign = (*t).sign;
-        bnp = bn_full_division(t, a);
-        (*(*bnp).rem).sign = 0;
-        delete_bn(a);
-        char *buff = calloc(digits, 1);
-        if(sign) buff[0] = '-';
-        char *buff1 = (char*)bn_to_string_rec((*bnp).quot, radix),
-             *buff2 = (char*)bn_to_string_rec((*bnp).rem, radix);
-        delete_bn((*bnp).rem);
-        delete_bn((*bnp).quot);
-        free(bnp);
-        int b1l = strlen(buff1);
-        strcat(buff, buff1);
-        int b2l = strlen(buff2);
-        // printf("d/2 %d\n", digits/2);
-        // printf("%s %d , %s %d\n", buff1, b1l, buff2, b2l);
-        for(int i = 0; i < digits/2-b2l; i++)  buff[b1l+i+sign] = '0'; 
-        for(int i = 0; i < b2l;          i++)  buff[b1l+i+sign + digits/2-b2l] = buff2[i];
-        free(buff1);
-        free(buff2);
-        return buff;
-    } else {
-        uint64 a = (*t).data[0];
-        if((*t).size > 1)
-            a += ((uint64)(*t).data[1])<<32ull;
-        if(a == 0) {
-            char *ret = malloc(2);
-            ret[0] = '0';
-            ret[1] = 0;
-            return ret;
-        }
-        char *buff = malloc(33), *p = buff+32, *ret;
-        buff[32] = 0;
-        const char alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        while(a > 0) {
-            p--;
-            (*p) = alphabet[a % radix];
-            a /= radix;
-        }
-        ret = malloc(buff-p+33);
-        strcpy(ret, p);
-        free(buff);
-        return ret;
-    }
 }
 
 int bn_root_to_newton(bn *t, int reciprocal) {
@@ -842,4 +787,84 @@ bn *bn_karat_mul(bn const *a, bn const *b) {
     delete_bn(msum);
     (*a1b1).sign = (*a).sign ^ (*b).sign;
     return a1b1;
+}
+
+// newton-rapson method
+bn *bn_inverse(bn const *a, int digits) {
+    bn *b = bn_new();
+    bn_init_int(b, 1);
+    int m = 1+(a->size-1)*32;
+    int64 adata = a->data[a->size-1];
+    while(adata /= 2) 
+        m++;
+    if(is_pow2(a)) { // not works on powers of two, apparently
+        if(is_zero(a)){
+            //error
+            return bn_new();
+        } else {
+            bn_shift(b, digits-m+1);
+            return b;
+        }
+    }
+    // inv = 140/33 + a(a*256/99 - 64/11) - implement later
+    // inv = (48 - 32a) / 34              - currently
+    bn_shift(b, digits);
+    bn *b2 = init(b);
+    bn_shift(b2, 1);
+    bn *inv  = bn_new();
+    bn_init_int(inv, 1);
+    bn_shift(inv, m);
+    bn_mul_to_int(inv, 48);
+    bn *a_copy = init(a);
+    bn_mul_to_int(a_copy, 32);
+    bn_sub_to(inv, a);
+    bn_shift(inv, digits-2*m);
+    bn_div_to_int(inv, 34);
+    // printf("%s\n", bn_to_string(inv, 10));
+    int i;
+    for(i = 0;; i++){
+        // inv = inv*(2*b - a*inv) / b
+        bn *t = init(a);
+        bn_mul_to(t, inv);
+        bn_sub_to(t, b2);
+        t->sign = 0;
+        bn_mul_to(inv, t);
+        bn_shift(inv, -digits);
+        free(t);
+        // 0 < b - a*inv < a
+        t = bn_mul(a, inv);
+        bn_sub_to(t, b);
+        t->sign ^= 1;
+        if(t->sign == 0 && bn_cmp(t, a) < 0)
+            break;
+    }
+    // printf("%d\n", i);
+    free(b);
+    free(b2);
+    return inv;
+}
+
+bn_pair *bn_full_division_fast_abs(bn const *a, bn const *b) { // a / b
+    bn_pair *ans = bn_pair_new();
+    int64 cmp = bn_cmp_abs(a, b);
+    if(cmp <= 0) {
+        if(cmp < 0) 
+            ans->rem = init(a);
+        else 
+            bn_init_int(ans->quot, 1); 
+        return ans;
+    }
+    int digits = a->size * 32;
+    bn *t = bn_inverse(b, digits);
+    ans->quot = bn_mul(t, a);
+    bn_shift(ans->quot, -digits);
+    free(t);
+    t = bn_mul(ans->quot, b);
+    ans->rem = bn_sub(a, t);
+    free(t);
+    if(bn_cmp_abs(ans->rem, b) >= 0) {
+        bn_sub_to(ans->rem, b);
+        bn_add_int_abs(ans->quot, 1);
+    }
+    return ans;
 }
