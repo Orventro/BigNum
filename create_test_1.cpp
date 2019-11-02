@@ -11,14 +11,15 @@ void print_num(int len) {
 }
 
 int main() {
-    int n, k; // num, len
-    cin >> n >> k;
-    cout << n << endl;
+    int n;
+    cin >> n;
+    printf("%d\n", n);
+    print_num(1000);
+    printf("\n");
     for(int i = 0; i < n; i++) {
-        int l1 = rand()%k, l2 = rand()%(k/2); 
-        print_num(l1);
-        cout << ' ';
-        print_num(l2);
-        cout << endl;
+        string ops = "+-*%/";
+        printf("%c ", ops[rand()%5]);
+        print_num(rand()%1000+10);
+        printf("\n");
     }
 }
